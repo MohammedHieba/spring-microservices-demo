@@ -1,5 +1,6 @@
 package com.microservices.order_service.service;
 
+import com.microservices.order_service.dto.InventoryResponse;
 import com.microservices.order_service.dto.OrderLineItemsDto;
 import com.microservices.order_service.dto.OrderRequest;
 import com.microservices.order_service.entity.Order;
@@ -9,7 +10,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -19,6 +24,7 @@ import java.util.UUID;
 public class OrderService {
 
     private final OrderRepository orderRepository;
+    private final WebClient inventoryWebClient;
 
     public String placeOrder(OrderRequest orderRequest) {
         Order order = new Order();
@@ -28,10 +34,25 @@ public class OrderService {
                 .stream()
                 .map(this::mapToDto)
                 .toList();
+        List<String> skuCodes = orderLineItems.stream().map(OrderLineItems::getSkuCode).toList();
 
         order.setOrderLineItemsList(orderLineItems);
+        // check stock in the inventory service
+        List<InventoryResponse> inventoryResponses = inventoryWebClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/api/inventory")
+                        .queryParam("skuCode", skuCodes)   // multiple values supported
+                        .build())
+                .retrieve()
+                .bodyToFlux(InventoryResponse.class).collectList().block();
+        boolean allProductsInStock = inventoryResponses.stream().allMatch(InventoryResponse::isInStock);
 
-        orderRepository.save(order);
+        if(allProductsInStock){
+            orderRepository.save(order);
+        }else {
+            throw new RuntimeException("out of stock");
+        }
+
         return "Order Placed";
 
     };
