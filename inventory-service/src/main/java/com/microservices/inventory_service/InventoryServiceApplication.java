@@ -26,7 +26,7 @@ public class InventoryServiceApplication implements CommandLineRunner {
 
         Inventory entity2 = new Inventory();
         entity2.setSkuCode("iphone_17");
-        entity2.setQuantity(0);
+        entity2.setQuantity(1);
 
         this.inventoryRepository.save(entity1);
         this.inventoryRepository.save(entity2);
