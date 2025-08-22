@@ -8,13 +8,12 @@ import com.microservices.order_service.entity.OrderLineItems;
 import com.microservices.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.oauth2.client.web.reactive.function.client.ServletOAuth2AuthorizedClientExchangeFilterFunction;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -46,20 +45,21 @@ public class OrderService {
                         .path("/api/inventory")
                         .queryParam("skuCode", skuCodes)   // multiple values supported
                         .build())
+                .attributes(ServletOAuth2AuthorizedClientExchangeFilterFunction.clientRegistrationId("my-client"))
                 .retrieve()
                 .bodyToFlux(InventoryResponse.class).collectList().block();
 
         boolean allProductsInStock = inventoryResponses.stream().allMatch(InventoryResponse::isInStock);
 
-        if(allProductsInStock){
+        if (allProductsInStock) {
             orderRepository.save(order);
-        }else {
+        } else {
             throw new RuntimeException("out of stock");
         }
 
         return "Order Placed";
 
-    };
+    }
 
     private OrderLineItems mapToDto(OrderLineItemsDto orderLineItemsDto) {
         OrderLineItems orderLineItems = new OrderLineItems();
