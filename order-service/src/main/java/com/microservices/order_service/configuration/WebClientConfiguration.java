@@ -24,7 +24,6 @@ public class WebClientConfiguration {
     public AuthorizedClientServiceOAuth2AuthorizedClientManager authorizedClientManager(
             ClientRegistrationRepository clientRegistrationRepository) {
 
-        // In-memory service لتخزين الـ Access Tokens
         InMemoryOAuth2AuthorizedClientService clientService =
                 new InMemoryOAuth2AuthorizedClientService(clientRegistrationRepository);
 
@@ -32,7 +31,6 @@ public class WebClientConfiguration {
                 new AuthorizedClientServiceOAuth2AuthorizedClientManager(
                         clientRegistrationRepository, clientService);
 
-        // configure provider لدعم client_credentials
         OAuth2AuthorizedClientProvider provider = OAuth2AuthorizedClientProviderBuilder.builder()
                 .clientCredentials()
                 .build();
