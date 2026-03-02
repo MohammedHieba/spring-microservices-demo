@@ -7,6 +7,7 @@ import com.microservices.order_service.entity.OrderLineItems;
 import com.microservices.order_service.enums.OrderStatus;
 import com.microservices.order_service.events.InventoryResponseEvent;
 import com.microservices.order_service.events.OrderCreatedEvent;
+import com.microservices.order_service.events.OrderRejectedEvent;
 import com.microservices.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +27,8 @@ import java.util.UUID;
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final KafkaTemplate<String, OrderCreatedEvent> kafkaTemplate;
+    private final KafkaTemplate<String, OrderCreatedEvent> createdEventKafkaTemplate;
+    private final KafkaTemplate<String, OrderRejectedEvent> rejectedEventKafkaTemplate;
 
 
     @Transactional
@@ -45,16 +47,11 @@ public class OrderService {
 
         orderRepository.save(order);
 
-        List<String> skuCodes = orderLineItems.stream()
-                .map(OrderLineItems::getSkuCode)
-                .toList();
-
-        OrderCreatedEvent event = new OrderCreatedEvent(
-                order.getOrderNumber(),
-                skuCodes
+        OrderCreatedEvent event = new OrderCreatedEvent( order.getOrderNumber(),
+                orderRequest.getOrderLineItemsDtoList()
         );
 
-        kafkaTemplate.send("order-created-topic", order.getOrderNumber(), event)
+        createdEventKafkaTemplate.send("order-created-topic", order.getOrderNumber(), event)
                 .whenComplete((result, ex) -> {
                     if (ex == null) {
                         log.info("OrderCreatedEvent sent for order {}", order.getOrderNumber());
@@ -90,6 +87,7 @@ public class OrderService {
         log.info("Order {} status updated to {}", order.getOrderNumber(), order.getStatus());
     }
 
+    // compensation in case of consuming the tries of InventoryResponseEvent had been exceeded.
     @KafkaListener(topics = "inventory-response-topic-dlt", groupId = "order-service")
     @Transactional
     public void handleInventoryResponseDLT(InventoryResponseEvent event) {
@@ -108,6 +106,12 @@ public class OrderService {
         if (optionalOrder.get().getStatus() != OrderStatus.PENDING) {
             return;
         }
+        List<OrderLineItemsDto> orderLineItems = order.getOrderLineItemsList()
+                .stream()
+                .map(this::mapToDto)
+                .toList();
+
+        OrderRejectedEvent rejectedEvent = new OrderRejectedEvent(order.getOrderNumber(), orderLineItems);
 
         // Compensation Action
         order.setStatus(OrderStatus.REJECTED);
@@ -115,6 +119,15 @@ public class OrderService {
         orderRepository.save(order);
 
         log.info("Order {} marked as REJECTED due to Saga failure", order.getOrderNumber());
+
+        rejectedEventKafkaTemplate.send("order-rejected-topic", order.getOrderNumber(), rejectedEvent)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.info("OrderRejectedEvent sent for order {}", order.getOrderNumber());
+                    } else {
+                        log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
+                    }
+                });
     }
 
     private OrderLineItems mapToDto(OrderLineItemsDto orderLineItemsDto) {
@@ -123,5 +136,13 @@ public class OrderService {
         orderLineItems.setQuantity(orderLineItemsDto.getQuantity());
         orderLineItems.setSkuCode(orderLineItemsDto.getSkuCode());
         return orderLineItems;
+    }
+
+    private OrderLineItemsDto mapToDto(OrderLineItems orderLineItems) {
+        OrderLineItemsDto orderLineItemsDto = new OrderLineItemsDto();
+        orderLineItemsDto.setPrice(orderLineItemsDto.getPrice());
+        orderLineItemsDto.setQuantity(orderLineItemsDto.getQuantity());
+        orderLineItemsDto.setSkuCode(orderLineItemsDto.getSkuCode());
+        return orderLineItemsDto;
     }
 }

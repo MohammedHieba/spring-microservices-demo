@@ -1,7 +1,10 @@
 package com.microservices.order_service.events;
 
 import com.microservices.order_service.dto.OrderLineItemsDto;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.util.List;
 
@@ -9,8 +12,7 @@ import java.util.List;
 @Setter
 @AllArgsConstructor
 @NoArgsConstructor
-public class OrderCreatedEvent {
-
+public class OrderRejectedEvent {
     private String orderNumber;
-   private List<OrderLineItemsDto> orderLineItemsDtoList;
+    private List<OrderLineItemsDto> orderLineItemsDtoList;
 }
