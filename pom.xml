@@ -20,6 +20,7 @@
 
     <properties>
         <spring-cloud.version>2023.0.3</spring-cloud.version>
+        <java.version>17</java.version>
     </properties>
 
     <modules>
@@ -28,6 +29,7 @@
         <module>order-service</module>
         <module>service-discovery</module>
         <module>api-gateway</module>
+        <module>microservices-events</module>
     </modules>
 
     <dependencies>

@@ -1,6 +1,7 @@
-package com.microservices.inventory_service.events;
+package com.microservices.microservicesevents.order;
 
-import com.microservices.inventory_service.dto.OrderLineItemsDto;
+
+import com.microservices.microservicesevents.dto.OrderItem;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -15,5 +16,5 @@ import java.util.List;
 public class OrderCreatedEvent {
 
     private String orderNumber;
-   private List<OrderLineItemsDto> orderLineItemsDtoList;
+    private List<OrderItem> OrderItems;
 }

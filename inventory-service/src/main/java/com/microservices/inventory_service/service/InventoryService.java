@@ -1,10 +1,10 @@
 package com.microservices.inventory_service.service;
 
-import com.microservices.inventory_service.dto.OrderLineItemsDto;
 import com.microservices.inventory_service.entity.Inventory;
-import com.microservices.inventory_service.events.InventoryResponseEvent;
-import com.microservices.inventory_service.events.OrderCreatedEvent;
 import com.microservices.inventory_service.repository.InventoryRepository;
+import com.microservices.microservicesevents.dto.OrderItem;
+import com.microservices.microservicesevents.inventory.InventoryResponseEvent;
+import com.microservices.microservicesevents.order.OrderCreatedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -28,8 +28,8 @@ public class InventoryService {
     @Transactional
     public void handleOrderCreated(OrderCreatedEvent event) {
         boolean success = true;
-        List<OrderLineItemsDto> reservedItems = new ArrayList<>();
-        for (OrderLineItemsDto orderItem : event.getOrderLineItemsDtoList()) {
+        List<OrderItem> reservedItems = new ArrayList<>();
+        for (OrderItem orderItem : event.getOrderItems()) {
             boolean reserved = this.reserve(orderItem.getSkuCode(), orderItem.getQuantity());
             if (!reserved) {
                 success = false;
@@ -82,9 +82,8 @@ public class InventoryService {
     @KafkaListener(topics = "order-rejected-topic", groupId = "inventory-service")
     @Transactional
     public void handleOrderRejected(OrderCreatedEvent event){
-
-        if(!CollectionUtils.isEmpty(event.getOrderLineItemsDtoList())){
-            event.getOrderLineItemsDtoList().forEach(
+        if(!CollectionUtils.isEmpty(event.getOrderItems())){
+            event.getOrderItems().forEach(
                     item -> this.release(item.getSkuCode(), item.getQuantity())
             );
         }

@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/OrderService?createDatabaseIfNotExist=true
     username: root
-    password: root
+    password: 12345
 
   jpa:
     hibernate:
@@ -47,7 +47,7 @@ server:
 eureka:
   client:
     service-url:
-      defaultZone: http://localhost:8761/eureka/
+      defaultZone: http://localhost:8014/eureka/
     fetch-registry: true
     register-with-eureka: true
 

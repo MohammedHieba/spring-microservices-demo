@@ -1,13 +1,14 @@
 package com.microservices.order_service.service;
 
+import com.microservices.microservicesevents.dto.OrderItem;
+import com.microservices.microservicesevents.inventory.InventoryResponseEvent;
+import com.microservices.microservicesevents.order.OrderCreatedEvent;
+import com.microservices.microservicesevents.order.OrderRejectedEvent;
 import com.microservices.order_service.dto.OrderLineItemsDto;
 import com.microservices.order_service.dto.OrderRequest;
 import com.microservices.order_service.entity.Order;
 import com.microservices.order_service.entity.OrderLineItems;
 import com.microservices.order_service.enums.OrderStatus;
-import com.microservices.order_service.events.InventoryResponseEvent;
-import com.microservices.order_service.events.OrderCreatedEvent;
-import com.microservices.order_service.events.OrderRejectedEvent;
 import com.microservices.order_service.mappers.OrderMapper;
 import com.microservices.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
@@ -48,10 +49,9 @@ public class OrderService {
         order.setStatus(OrderStatus.PENDING);
 
         orderRepository.save(order);
+        List<OrderItem> OrderItems =  orderRequest.getOrderLineItemsDtoList().stream().map(mapper::mapDtoToOrderItem).toList();
 
-        OrderCreatedEvent event = new OrderCreatedEvent( order.getOrderNumber(),
-                orderRequest.getOrderLineItemsDtoList()
-        );
+        OrderCreatedEvent event = new OrderCreatedEvent( order.getOrderNumber(), OrderItems);
 
         createdEventKafkaTemplate.send("order-created-topic", order.getOrderNumber(), event)
                 .whenComplete((result, ex) -> {
@@ -112,8 +112,8 @@ public class OrderService {
                 .stream()
                 .map(mapper::mapToDto)
                 .toList();
-
-        OrderRejectedEvent rejectedEvent = new OrderRejectedEvent(order.getOrderNumber(), orderLineItems);
+        List<OrderItem> OrderItems =  order.getOrderLineItemsList().stream().map(mapper::mapEntityToOrderItem).toList();
+        OrderRejectedEvent rejectedEvent = new OrderRejectedEvent(order.getOrderNumber(), OrderItems);
 
         // Compensation Action
         order.setStatus(OrderStatus.REJECTED);
