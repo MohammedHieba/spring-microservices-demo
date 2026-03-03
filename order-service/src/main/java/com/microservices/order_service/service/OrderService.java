@@ -71,7 +71,7 @@ public class OrderService {
             backoff = @Backoff(delay = 2000),
             dltTopicSuffix = "-dlt"
     )
-    @KafkaListener(topics = "inventory-response-topic", groupId = "order-service")
+    @KafkaListener(topics = "inventory-response-topic", groupId = "order-service1")
     @Transactional
     public void handleInventoryResponse(InventoryResponseEvent event) {
 
@@ -90,7 +90,7 @@ public class OrderService {
     }
 
     // compensation in case of consuming the tries of InventoryResponseEvent had been exceeded.
-    @KafkaListener(topics = "inventory-response-topic-dlt", groupId = "order-service")
+    @KafkaListener(topics = "inventory-response-topic-dlt", groupId = "order-service1")
     @Transactional
     public void handleInventoryResponseDLT(InventoryResponseEvent event) {
 

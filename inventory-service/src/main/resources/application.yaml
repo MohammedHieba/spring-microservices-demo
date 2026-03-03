@@ -34,10 +34,10 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
 
-  properties:
-    spring.json.trusted.packages: "*"
-    spring.json.value.default.type: com.microservices.inventory_service.events.OrderCreatedEvent
-    spring.json.use.type.headers: false
+      properties:
+        spring.json.trusted.packages: com.microservices.*
+        spring.json.use.type.headers: true
+        spring.json.value.default.type: java.lang.Object
 
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
