@@ -8,6 +8,7 @@ import com.microservices.order_service.enums.OrderStatus;
 import com.microservices.order_service.events.InventoryResponseEvent;
 import com.microservices.order_service.events.OrderCreatedEvent;
 import com.microservices.order_service.events.OrderRejectedEvent;
+import com.microservices.order_service.mappers.OrderMapper;
 import com.microservices.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +30,7 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final KafkaTemplate<String, OrderCreatedEvent> createdEventKafkaTemplate;
     private final KafkaTemplate<String, OrderRejectedEvent> rejectedEventKafkaTemplate;
+    private final OrderMapper mapper;
 
 
     @Transactional
@@ -39,7 +41,7 @@ public class OrderService {
 
         List<OrderLineItems> orderLineItems = orderRequest.getOrderLineItemsDtoList()
                 .stream()
-                .map(this::mapToDto)
+                .map(mapper::mapToDto)
                 .toList();
 
         order.setOrderLineItemsList(orderLineItems);
@@ -108,7 +110,7 @@ public class OrderService {
         }
         List<OrderLineItemsDto> orderLineItems = order.getOrderLineItemsList()
                 .stream()
-                .map(this::mapToDto)
+                .map(mapper::mapToDto)
                 .toList();
 
         OrderRejectedEvent rejectedEvent = new OrderRejectedEvent(order.getOrderNumber(), orderLineItems);
@@ -130,19 +132,4 @@ public class OrderService {
                 });
     }
 
-    private OrderLineItems mapToDto(OrderLineItemsDto orderLineItemsDto) {
-        OrderLineItems orderLineItems = new OrderLineItems();
-        orderLineItems.setPrice(orderLineItemsDto.getPrice());
-        orderLineItems.setQuantity(orderLineItemsDto.getQuantity());
-        orderLineItems.setSkuCode(orderLineItemsDto.getSkuCode());
-        return orderLineItems;
-    }
-
-    private OrderLineItemsDto mapToDto(OrderLineItems orderLineItems) {
-        OrderLineItemsDto orderLineItemsDto = new OrderLineItemsDto();
-        orderLineItemsDto.setPrice(orderLineItemsDto.getPrice());
-        orderLineItemsDto.setQuantity(orderLineItemsDto.getQuantity());
-        orderLineItemsDto.setSkuCode(orderLineItemsDto.getSkuCode());
-        return orderLineItemsDto;
-    }
 }
