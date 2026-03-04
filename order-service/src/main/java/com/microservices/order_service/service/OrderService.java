@@ -13,6 +13,7 @@ import com.microservices.order_service.mappers.OrderMapper;
 import com.microservices.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.annotation.RetryableTopic;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -73,12 +74,14 @@ public class OrderService {
     )
     @KafkaListener(topics = "inventory-response-topic", groupId = "order-service1")
     @Transactional
-    public void handleInventoryResponse(InventoryResponseEvent event) {
+    public void handleInventoryResponse(ConsumerRecord<String, InventoryResponseEvent> record) {
 
-        Order order = orderRepository.findByOrderNumber(event.getOrderNumber())
+        log.info("InventoryResponseEvent received");
+
+        Order order = orderRepository.findByOrderNumber(record.value().getOrderNumber())
                 .orElseThrow();
 
-        if (event.isInStock()) {
+        if (record.value().isInStock()) {
             order.setStatus(OrderStatus.APPROVED);
         } else {
             order.setStatus(OrderStatus.REJECTED);
@@ -92,12 +95,12 @@ public class OrderService {
     // compensation in case of consuming the tries of InventoryResponseEvent had been exceeded.
     @KafkaListener(topics = "inventory-response-topic-dlt", groupId = "order-service1")
     @Transactional
-    public void handleInventoryResponseDLT(InventoryResponseEvent event) {
+    public void handleInventoryResponseDLT(ConsumerRecord<String, InventoryResponseEvent> record) {
 
-        log.error("Event moved to DLT for order {}", event.getOrderNumber());
+        log.error("Event moved to DLT for order {}", record.value());
 
         Optional<Order> optionalOrder =
-                orderRepository.findByOrderNumber(event.getOrderNumber());
+                orderRepository.findByOrderNumber(record.value().getOrderNumber());
 
         if (optionalOrder.isEmpty()) {
             return;

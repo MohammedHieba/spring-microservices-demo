@@ -27,6 +27,12 @@ spring:
     admin:
       auto-create: true
 
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+      properties:
+        spring.json.add.type.headers: true
 
     consumer:
       group-id: inventory-service
@@ -39,12 +45,7 @@ spring:
         spring.json.use.type.headers: true
         spring.json.value.default.type: java.lang.Object
 
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
-      properties:
-        spring.json.add.type.headers: true
 
 server:
   port: 0
