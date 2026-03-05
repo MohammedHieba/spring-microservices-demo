@@ -1,15 +1,13 @@
-package com.microservices.order_service.dto;
+package com.microservices.microservicesevents.dto;
 
 import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-@Builder
-public class InventoryResponse {
+public class OrderItem {
     private String skuCode;
-    private boolean isInStock;
+    private Integer quantity;
 }

@@ -1,5 +1,6 @@
 package com.microservices.order_service.entity;
 
+import com.microservices.order_service.enums.OrderStatus;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -21,4 +22,6 @@ public class Order {
     private String orderNumber;
     @OneToMany(cascade = CascadeType.ALL)
     private List<OrderLineItems> orderLineItemsList;
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status;
 }

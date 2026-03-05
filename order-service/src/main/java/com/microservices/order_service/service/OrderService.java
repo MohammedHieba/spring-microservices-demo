@@ -1,71 +1,160 @@
 package com.microservices.order_service.service;
 
-import com.microservices.order_service.dto.InventoryResponse;
+import com.microservices.microservicesevents.dto.OrderItem;
+import com.microservices.microservicesevents.inventory.InventoryResponseEvent;
+import com.microservices.microservicesevents.order.OrderApprovedEvent;
+import com.microservices.microservicesevents.order.OrderCreatedEvent;
+import com.microservices.microservicesevents.order.OrderRejectedEvent;
 import com.microservices.order_service.dto.OrderLineItemsDto;
 import com.microservices.order_service.dto.OrderRequest;
 import com.microservices.order_service.entity.Order;
 import com.microservices.order_service.entity.OrderLineItems;
+import com.microservices.order_service.enums.OrderStatus;
+import com.microservices.order_service.mappers.OrderMapper;
 import com.microservices.order_service.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.oauth2.client.web.reactive.function.client.ServletOAuth2AuthorizedClientExchangeFilterFunction;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.annotation.RetryableTopic;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.reactive.function.client.WebClient;
-
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
 @Slf4j
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final WebClient.Builder webClientBuilder;
+    private final KafkaTemplate<String, OrderCreatedEvent> createdEventKafkaTemplate;
+    private final KafkaTemplate<String, OrderRejectedEvent> rejectedEventKafkaTemplate;
+    private final KafkaTemplate<String, OrderApprovedEvent> approvedEventKafkaTemplate;
+    private final OrderMapper mapper;
 
+
+    @Transactional
     public String placeOrder(OrderRequest orderRequest) {
+
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
 
         List<OrderLineItems> orderLineItems = orderRequest.getOrderLineItemsDtoList()
                 .stream()
-                .map(this::mapToDto)
+                .map(mapper::mapToDto)
                 .toList();
-        List<String> skuCodes = orderLineItems.stream().map(OrderLineItems::getSkuCode).toList();
 
         order.setOrderLineItemsList(orderLineItems);
-        // check stock in the inventory service
-        List<InventoryResponse> inventoryResponses = webClientBuilder
-                .baseUrl("http://inventory-service")
-                .build()
-                .get()
-                .uri(uriBuilder -> uriBuilder
-                        .path("/api/inventory")
-                        .queryParam("skuCode", skuCodes)   // multiple values supported
-                        .build())
-                .attributes(ServletOAuth2AuthorizedClientExchangeFilterFunction.clientRegistrationId("my-client"))
-                .retrieve()
-                .bodyToFlux(InventoryResponse.class).collectList().block();
+        order.setStatus(OrderStatus.PENDING);
 
-        boolean allProductsInStock = inventoryResponses.stream().allMatch(InventoryResponse::isInStock);
+        orderRepository.save(order);
+        List<OrderItem> OrderItems =  orderRequest.getOrderLineItemsDtoList().stream().map(mapper::mapDtoToOrderItem).toList();
 
-        if (allProductsInStock) {
-            orderRepository.save(order);
+        OrderCreatedEvent event = new OrderCreatedEvent( order.getOrderNumber(), OrderItems);
+
+        createdEventKafkaTemplate.send("order-created-topic", order.getOrderNumber(), event)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.info("OrderCreatedEvent sent for order {}", order.getOrderNumber());
+                    } else {
+                        log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
+                    }
+                });
+
+        return "Order placed and waiting for confirmation";
+
+    }
+
+    @RetryableTopic(
+            attempts = "3",
+            backoff = @Backoff(delay = 2000),
+            dltTopicSuffix = "-dlt"
+    )
+    @KafkaListener(topics = "inventory-response-topic", groupId = "order-service1")
+    @Transactional
+    public void handleInventoryResponse(ConsumerRecord<String, InventoryResponseEvent> record) {
+
+//        throw new RuntimeException("simulate InventoryResponseEvent will not consumed so it should throw back to DLT for a compensation");
+        log.info("InventoryResponseEvent received");
+
+        Order order = orderRepository.findByOrderNumber(record.value().getOrderNumber())
+                .orElseThrow();
+
+        List<OrderItem> OrderItems =  order.getOrderLineItemsList().stream().map(mapper::mapEntityToOrderItem).toList();
+        if (record.value().isInStock()) {
+            order.setStatus(OrderStatus.APPROVED);
+            OrderApprovedEvent event = new OrderApprovedEvent(order.getOrderNumber(), OrderItems);
+            approvedEventKafkaTemplate.send("order-approved-topic", order.getOrderNumber(), event)
+                    .whenComplete((result, ex) -> {
+                        if (ex == null) {
+                            log.info("OrderCreatedEvent sent for order {}", order.getOrderNumber());
+                        } else {
+                            log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
+                        }
+                    });
         } else {
-            throw new RuntimeException("out of stock");
+            order.setStatus(OrderStatus.REJECTED);
+            OrderRejectedEvent rejectedEvent = new OrderRejectedEvent(order.getOrderNumber(), OrderItems);
+            rejectedEventKafkaTemplate.send("order-rejected-topic", order.getOrderNumber(), rejectedEvent)
+                    .whenComplete((result, ex) -> {
+                        if (ex == null) {
+                            log.info("OrderRejectedEvent sent for order {}", order.getOrderNumber());
+                        } else {
+                            log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
+                        }
+                    });
         }
 
-        return "Order Placed";
+        orderRepository.save(order);
 
+
+
+
+        log.info("Order {} status updated to {}", order.getOrderNumber(), order.getStatus());
     }
 
-    private OrderLineItems mapToDto(OrderLineItemsDto orderLineItemsDto) {
-        OrderLineItems orderLineItems = new OrderLineItems();
-        orderLineItems.setPrice(orderLineItemsDto.getPrice());
-        orderLineItems.setQuantity(orderLineItemsDto.getQuantity());
-        orderLineItems.setSkuCode(orderLineItemsDto.getSkuCode());
-        return orderLineItems;
+    // compensation in case of consuming the tries of InventoryResponseEvent had been exceeded.
+    @KafkaListener(topics = "inventory-response-topic-dlt", groupId = "order-service1")
+    @Transactional
+    public void handleInventoryResponseDLT(ConsumerRecord<String, InventoryResponseEvent> record) {
+
+        log.error("Event moved to DLT for order {}", record.value());
+
+        Optional<Order> optionalOrder =
+                orderRepository.findByOrderNumber(record.value().getOrderNumber());
+
+        if (optionalOrder.isEmpty()) {
+            return;
+        }
+
+        Order order = optionalOrder.get();
+        // mandatory check for handling Idempotency
+        if (optionalOrder.get().getStatus() != OrderStatus.PENDING) {
+            return;
+        }
+
+        List<OrderItem> OrderItems =  order.getOrderLineItemsList().stream().map(mapper::mapEntityToOrderItem).toList();
+        OrderRejectedEvent rejectedEvent = new OrderRejectedEvent(order.getOrderNumber(), OrderItems);
+
+        // Compensation Action
+        order.setStatus(OrderStatus.REJECTED);
+
+        orderRepository.save(order);
+
+        log.info("Order {} marked as REJECTED due to Saga failure", order.getOrderNumber());
+
+        rejectedEventKafkaTemplate.send("order-rejected-topic", order.getOrderNumber(), rejectedEvent)
+                .whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.info("OrderRejectedEvent sent for order {}", order.getOrderNumber());
+                    } else {
+                        log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
+                    }
+                });
     }
+
 }
