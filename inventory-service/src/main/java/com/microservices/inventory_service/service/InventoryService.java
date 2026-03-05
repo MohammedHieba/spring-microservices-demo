@@ -4,9 +4,12 @@ import com.microservices.inventory_service.entity.Inventory;
 import com.microservices.inventory_service.repository.InventoryRepository;
 import com.microservices.microservicesevents.dto.OrderItem;
 import com.microservices.microservicesevents.inventory.InventoryResponseEvent;
+import com.microservices.microservicesevents.order.OrderApprovedEvent;
 import com.microservices.microservicesevents.order.OrderCreatedEvent;
+import com.microservices.microservicesevents.order.OrderRejectedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -26,10 +29,10 @@ public class InventoryService {
 
     @KafkaListener(topics = "order-created-topic", groupId = "inventory-service")
     @Transactional
-    public void handleOrderCreated(OrderCreatedEvent event) {
+    public void handleOrderCreated(ConsumerRecord<String, OrderCreatedEvent> record) {
         boolean success = true;
         List<OrderItem> reservedItems = new ArrayList<>();
-        for (OrderItem orderItem : event.getOrderItems()) {
+        for (OrderItem orderItem : record.value().getOrderItems()) {
             boolean reserved = this.reserve(orderItem.getSkuCode(), orderItem.getQuantity());
             if (!reserved) {
                 success = false;
@@ -40,17 +43,39 @@ public class InventoryService {
 
         if (!success) {
             reservedItems.forEach(
-                    item -> release(item.getSkuCode(), item.getQuantity())
+                    item -> release(item.getSkuCode(), item.getQuantity(), Boolean.FALSE)
             );
         }
 
 
         InventoryResponseEvent response =
-                new InventoryResponseEvent(event.getOrderNumber(), success);
+                new InventoryResponseEvent(record.value().getOrderNumber(), success);
 
         kafkaTemplate.send("inventory-response-topic",
-                event.getOrderNumber(),
+                record.value().getOrderNumber(),
                 response);
+    }
+
+    @KafkaListener(topics = "order-approved-topic", groupId = "inventory-service")
+    @Transactional
+    public void handleOrderApproved(ConsumerRecord<String, OrderApprovedEvent> record) {
+        if(!CollectionUtils.isEmpty(record.value().getOrderItems())){
+            record.value().getOrderItems().forEach(
+                    item -> this.release(item.getSkuCode(), item.getQuantity(), Boolean.TRUE)
+            );
+        }
+    }
+
+
+    @KafkaListener(topics = "order-rejected-topic", groupId = "inventory-service")
+    @Transactional
+    public void handleOrderRejected(ConsumerRecord<String, OrderRejectedEvent> record){
+        if(!CollectionUtils.isEmpty(record.value().getOrderItems())){
+            record.value().getOrderItems().forEach(
+                    item -> this.release(item.getSkuCode(), item.getQuantity(), Boolean.FALSE)
+            );
+        }
+
     }
 
 
@@ -78,19 +103,9 @@ public class InventoryService {
     }
 
 
-    //-------------------------------------------------event consumer in case of failure of order has been rejected
-    @KafkaListener(topics = "order-rejected-topic", groupId = "inventory-service")
-    @Transactional
-    public void handleOrderRejected(OrderCreatedEvent event){
-        if(!CollectionUtils.isEmpty(event.getOrderItems())){
-            event.getOrderItems().forEach(
-                    item -> this.release(item.getSkuCode(), item.getQuantity())
-            );
-        }
 
-    }
 
-    private void release(String skuCode, int quantity) {
+    private void release(String skuCode, int quantity, boolean isApprovedOrder) {
 
         Inventory inventory = inventoryRepository.findBySkuCode(skuCode)
                 .orElseThrow(() -> new RuntimeException("SKU not found"));
@@ -98,6 +113,8 @@ public class InventoryService {
         inventory.setReservedQuantity(
                 inventory.getReservedQuantity() - quantity
         );
+
+        if(isApprovedOrder)  inventory.setQuantity(inventory.getQuantity() -quantity);
 
         inventoryRepository.save(inventory);
 
