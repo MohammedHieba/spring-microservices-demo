@@ -14,5 +14,5 @@ import java.util.List;
 @NoArgsConstructor
 public class OrderRejectedEvent {
     private String orderNumber;
-    private List<OrderItem> OrderItems;
+    private List<OrderItem> orderItems;
 }

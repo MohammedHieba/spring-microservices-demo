@@ -16,5 +16,5 @@ import java.util.List;
 public class OrderCreatedEvent {
 
     private String orderNumber;
-    private List<OrderItem> OrderItems;
+    private List<OrderItem> orderItems;
 }

@@ -7,6 +7,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.List;
 
 @Entity
@@ -24,4 +25,6 @@ public class Order {
     private List<OrderLineItems> orderLineItemsList;
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
+    @Column(name = "created_at")
+    private Instant createdAt;
 }

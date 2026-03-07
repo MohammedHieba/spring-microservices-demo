@@ -1,5 +1,8 @@
 package com.microservices.order_service.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microservices.microservicesevents.dto.OrderItem;
 import com.microservices.microservicesevents.inventory.InventoryResponseEvent;
 import com.microservices.microservicesevents.order.OrderApprovedEvent;
@@ -9,9 +12,11 @@ import com.microservices.order_service.dto.OrderLineItemsDto;
 import com.microservices.order_service.dto.OrderRequest;
 import com.microservices.order_service.entity.Order;
 import com.microservices.order_service.entity.OrderLineItems;
+import com.microservices.order_service.entity.OutboxEvent;
 import com.microservices.order_service.enums.OrderStatus;
 import com.microservices.order_service.mappers.OrderMapper;
 import com.microservices.order_service.repository.OrderRepository;
+import com.microservices.order_service.repository.OutboxRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -21,6 +26,8 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,15 +37,20 @@ import java.util.UUID;
 @Slf4j
 public class OrderService {
 
-    private final OrderRepository orderRepository;
-    private final KafkaTemplate<String, OrderCreatedEvent> createdEventKafkaTemplate;
-    private final KafkaTemplate<String, OrderRejectedEvent> rejectedEventKafkaTemplate;
-    private final KafkaTemplate<String, OrderApprovedEvent> approvedEventKafkaTemplate;
     private final OrderMapper mapper;
+    private final ObjectMapper objectMapper;
+    private final OrderRepository orderRepository;
+    private final OutboxRepository outboxRepository;
+    final static String AGGREGATE_TYPE = "order";
+    final static String ORDER_CREATED_TOPIC = "order-created-topic";
+    final static String ORDER_APPROVED_TOPIC = "order-approved-topic";
+    final static String ORDER_REJECTED_TOPIC = "order-rejected-topic";
 
-
+    // Implement the Outbox Pattern to avoid the dual-write problem by persisting
+   // the business data and the corresponding outbox event within the same database
+   // transaction, ensuring the system remains in a consistent state.
     @Transactional
-    public String placeOrder(OrderRequest orderRequest) {
+    public String placeOrder(OrderRequest orderRequest) throws JsonProcessingException {
 
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
@@ -50,21 +62,14 @@ public class OrderService {
 
         order.setOrderLineItemsList(orderLineItems);
         order.setStatus(OrderStatus.PENDING);
+        order.setCreatedAt(Instant.now());
 
         orderRepository.save(order);
-        List<OrderItem> OrderItems =  orderRequest.getOrderLineItemsDtoList().stream().map(mapper::mapDtoToOrderItem).toList();
+        List<OrderItem> orderItems =  orderRequest.getOrderLineItemsDtoList().stream().map(mapper::mapDtoToOrderItem).toList();
 
-        OrderCreatedEvent event = new OrderCreatedEvent( order.getOrderNumber(), OrderItems);
+        OrderCreatedEvent orderCreatedEvent = new OrderCreatedEvent( order.getOrderNumber(), orderItems);
 
-        createdEventKafkaTemplate.send("order-created-topic", order.getOrderNumber(), event)
-                .whenComplete((result, ex) -> {
-                    if (ex == null) {
-                        log.info("OrderCreatedEvent sent for order {}", order.getOrderNumber());
-                    } else {
-                        log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
-                    }
-                });
-
+        saveOutboxEvent(orderCreatedEvent, ORDER_CREATED_TOPIC, orderCreatedEvent.getOrderNumber());
         return "Order placed and waiting for confirmation";
 
     }
@@ -74,58 +79,42 @@ public class OrderService {
             backoff = @Backoff(delay = 2000),
             dltTopicSuffix = "-dlt"
     )
-    @KafkaListener(topics = "inventory-response-topic", groupId = "order-service1")
+    @KafkaListener(topics = "inventory-response-topic", groupId = "order-service")
     @Transactional
-    public void handleInventoryResponse(ConsumerRecord<String, InventoryResponseEvent> record) {
+    public void handleInventoryResponse(ConsumerRecord<String, String> record) throws JsonProcessingException {
 
-//        throw new RuntimeException("simulate InventoryResponseEvent will not consumed so it should throw back to DLT for a compensation");
+//        throw new RuntimeException("simulate InventoryResponseEvent will not be consumed so it should throw back to DLT for a compensation");
         log.info("InventoryResponseEvent received");
+        InventoryResponseEvent inventoryResponseEvent = objectMapper.readValue(record.value(), InventoryResponseEvent.class);
 
-        Order order = orderRepository.findByOrderNumber(record.value().getOrderNumber())
+        Order order = orderRepository.findByOrderNumber(inventoryResponseEvent.getOrderNumber())
                 .orElseThrow();
 
         List<OrderItem> OrderItems =  order.getOrderLineItemsList().stream().map(mapper::mapEntityToOrderItem).toList();
-        if (record.value().isInStock()) {
+        if (inventoryResponseEvent.isInStock()) {
             order.setStatus(OrderStatus.APPROVED);
-            OrderApprovedEvent event = new OrderApprovedEvent(order.getOrderNumber(), OrderItems);
-            approvedEventKafkaTemplate.send("order-approved-topic", order.getOrderNumber(), event)
-                    .whenComplete((result, ex) -> {
-                        if (ex == null) {
-                            log.info("OrderCreatedEvent sent for order {}", order.getOrderNumber());
-                        } else {
-                            log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
-                        }
-                    });
+            OrderApprovedEvent orderApprovedEvent = new OrderApprovedEvent(order.getOrderNumber(), OrderItems);
+            saveOutboxEvent(orderApprovedEvent, ORDER_APPROVED_TOPIC, orderApprovedEvent.getOrderNumber());
+
         } else {
             order.setStatus(OrderStatus.REJECTED);
-            OrderRejectedEvent rejectedEvent = new OrderRejectedEvent(order.getOrderNumber(), OrderItems);
-            rejectedEventKafkaTemplate.send("order-rejected-topic", order.getOrderNumber(), rejectedEvent)
-                    .whenComplete((result, ex) -> {
-                        if (ex == null) {
-                            log.info("OrderRejectedEvent sent for order {}", order.getOrderNumber());
-                        } else {
-                            log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
-                        }
-                    });
         }
-
         orderRepository.save(order);
-
-
-
 
         log.info("Order {} status updated to {}", order.getOrderNumber(), order.getStatus());
     }
 
     // compensation in case of consuming the tries of InventoryResponseEvent had been exceeded.
-    @KafkaListener(topics = "inventory-response-topic-dlt", groupId = "order-service1")
+    @KafkaListener(topics = "inventory-response-topic-dlt", groupId = "order-service")
     @Transactional
-    public void handleInventoryResponseDLT(ConsumerRecord<String, InventoryResponseEvent> record) {
+    public void handleInventoryResponseDLT(ConsumerRecord<String, String> record) throws JsonProcessingException {
 
         log.error("Event moved to DLT for order {}", record.value());
+        String payload = record.value();
+        InventoryResponseEvent inventoryResponseEvent = parseEvent(payload, InventoryResponseEvent.class);
 
         Optional<Order> optionalOrder =
-                orderRepository.findByOrderNumber(record.value().getOrderNumber());
+                orderRepository.findByOrderNumber(inventoryResponseEvent.getOrderNumber());
 
         if (optionalOrder.isEmpty()) {
             return;
@@ -146,15 +135,26 @@ public class OrderService {
         orderRepository.save(order);
 
         log.info("Order {} marked as REJECTED due to Saga failure", order.getOrderNumber());
+        saveOutboxEvent(rejectedEvent, ORDER_REJECTED_TOPIC, rejectedEvent.getOrderNumber());
+    }
 
-        rejectedEventKafkaTemplate.send("order-rejected-topic", order.getOrderNumber(), rejectedEvent)
-                .whenComplete((result, ex) -> {
-                    if (ex == null) {
-                        log.info("OrderRejectedEvent sent for order {}", order.getOrderNumber());
-                    } else {
-                        log.error("Failed to send OrderCreatedEvent for order {}", order.getOrderNumber(), ex);
-                    }
-                });
+    private void saveOutboxEvent(Object event, String topic, String aggregateId)
+            throws JsonProcessingException {
+        JsonNode payload = objectMapper.valueToTree(event);
+
+        OutboxEvent outboxEvent = OutboxEvent.builder()
+                .eventId(UUID.randomUUID().toString())
+                .aggregateType(AGGREGATE_TYPE)
+                .aggregateId(aggregateId)
+                .topic(topic)
+                .payload(payload)
+                .createdAt(Instant.now())
+                .build();
+        outboxRepository.save(outboxEvent);
+    }
+
+    private <T> T parseEvent(String payload, Class<T> clazz)  throws JsonProcessingException{
+        return objectMapper.readValue(payload, clazz);
     }
 
 }

@@ -1,5 +1,6 @@
 package com.microservices.order_service.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.microservices.order_service.dto.OrderRequest;
 import com.microservices.order_service.service.OrderService;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +18,7 @@ public class OrderController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public String placeOrder(@RequestBody OrderRequest orderRequest) {
+    public String placeOrder(@RequestBody OrderRequest orderRequest) throws JsonProcessingException {
         log.info("Placing Order");
         return orderService.placeOrder(orderRequest);
     }
